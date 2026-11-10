@@ -20,6 +20,7 @@ permissions: {}
 
 jobs:
   check-cli-docs:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     runs-on: ubuntu-latest

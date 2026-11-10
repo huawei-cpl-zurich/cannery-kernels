@@ -40,6 +40,7 @@ permissions: {}
 
 jobs:
   init-build-upload:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Init, build, and upload kernel
@@ -130,6 +131,7 @@ jobs:
           nix run $GITHUB_WORKSPACE#kernel-builder -- upload /tmp/${{ env.E2E_REPO_NAME }} --repo-type model
 
   download-and-test:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Download and test kernel via get_kernel
@@ -184,7 +186,7 @@ jobs:
     permissions: {}
     name: Clean up test repos
     needs: [init-build-upload, download-and-test]
-    if: always()
+    if: github.repository == 'huggingface/kernels' && (always())
     runs-on: ubuntu-latest
     steps:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0

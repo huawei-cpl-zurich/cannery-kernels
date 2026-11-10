@@ -8,6 +8,7 @@ on:
 
 jobs:
   security-audit:
+    if: github.repository == 'huggingface/kernels'
     runs-on: ubuntu-latest
     permissions:
       contents: read
