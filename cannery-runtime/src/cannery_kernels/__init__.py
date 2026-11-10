@@ -89,7 +89,15 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
         ):
             raise ValueError("Invalid package metadata")
         return metadata, contents["kernel.so"]
-    except (tarfile.TarError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+    except (
+        tarfile.TarError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+        OverflowError,
+        RecursionError,
+    ):
         raise CanneryPackageError("Invalid Cannery binary package") from None
 
 

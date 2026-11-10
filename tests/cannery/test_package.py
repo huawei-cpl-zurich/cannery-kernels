@@ -5,7 +5,8 @@ import json
 import tarfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 MODULE = Path(__file__).resolve().parents[2] / "cannery-runtime/src/cannery_kernels/__init__.py"
 spec = importlib.util.spec_from_file_location("cannery_loader", MODULE)
@@ -62,9 +63,16 @@ class PackageTests(unittest.TestCase):
             ):
                 with self.assertRaises(loader.CanneryPackageError):
                     loader.load_cannery_package(data, sha, trust_remote_code=True)
-            with patch.object(loader, "runtime_fingerprint", return_value=metadata["runtime"]):
-                with self.assertRaises(AssertionError):
-                    loader.load_cannery_package(data, sha, trust_remote_code=True)
+        with patch.object(loader, "runtime_fingerprint", return_value=metadata["runtime"]):
+            library = SimpleNamespace(cannery_launch=MagicMock())
+            with patch.object(loader.ctypes, "CDLL", return_value=library) as native:
+                with patch(
+                    "socket.create_connection", side_effect=AssertionError("network forbidden")
+                ):
+                    kernel = loader.load_cannery_package(data, sha, trust_remote_code=True)
+                native.assert_called_once()
+                self.assertEqual(kernel.metadata, metadata)
+                kernel._directory.cleanup()
 
     def test_corruption_unsupported_abi_extra_member_and_missing_runtime(self):
         for change in [
