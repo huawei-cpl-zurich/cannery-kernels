@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cannery-kernels-runtime"
+version = "0.1.0"
+description = "Offline verified Ascend binary loading for Cannery workers"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+lint.select = ["E", "F", "I", "UP", "B"]

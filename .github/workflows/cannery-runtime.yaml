@@ -1,0 +1,25 @@
+name: Cannery private runtime
+on:
+  push:
+    paths: ["cannery-runtime/**", "tests/cannery/**", ".github/workflows/cannery-runtime.yaml"]
+  pull_request:
+    paths: ["cannery-runtime/**", "tests/cannery/**", ".github/workflows/cannery-runtime.yaml"]
+permissions:
+  contents: read
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install ./cannery-runtime build ruff
+      - run: ruff check cannery-runtime && ruff format --check cannery-runtime
+      - run: python -m unittest discover -s tests/cannery -v
+      - run: python -m build cannery-runtime
+      - run: python -c 'from cannery_kernels import load_cannery_package; assert load_cannery_package'
