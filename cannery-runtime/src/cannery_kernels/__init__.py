@@ -80,6 +80,7 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
             or metadata["device"] != "a5"
             or not isinstance(metadata["compiler"], str)
             or not metadata["compiler"]
+            or not isinstance(metadata["source_sha256"], str)
             or len(metadata["source_sha256"]) != 64
             or any(c not in "0123456789abcdef" for c in metadata["source_sha256"])
             or set(metadata["runtime"])

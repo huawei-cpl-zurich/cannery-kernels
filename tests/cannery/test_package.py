@@ -80,6 +80,7 @@ class PackageTests(unittest.TestCase):
             lambda m: m.update(schema_version=True),
             lambda m: m.update(library_sha256="b" * 64),
             lambda m: m.update(source_sha256="z" * 64),
+            lambda m: m.update(source_sha256=["a"] * 64),
             lambda m: m.update(runtime={}),
         ]:
             data, sha, _ = package(change)
