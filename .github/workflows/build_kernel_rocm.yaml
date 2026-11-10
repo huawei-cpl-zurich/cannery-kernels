@@ -18,6 +18,7 @@ permissions: {}
 
 jobs:
   build:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Build kernels (ROCm)

@@ -15,6 +15,7 @@ permissions: {}
 
 jobs:
   fmt:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Rustfmt
@@ -37,6 +38,7 @@ jobs:
         run: ( cd kernel-port && cargo fmt --all -- --check )
 
   clippy:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Clippy
@@ -68,6 +70,7 @@ jobs:
         run: ( cd kernel-port && cargo clippy -- -D warnings )
 
   test:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Test

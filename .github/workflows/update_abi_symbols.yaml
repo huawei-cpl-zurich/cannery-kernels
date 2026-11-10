@@ -15,6 +15,7 @@ permissions: {}
 
 jobs:
   update:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Refresh vendored ABI symbol files

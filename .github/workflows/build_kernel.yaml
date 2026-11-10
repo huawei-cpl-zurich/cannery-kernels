@@ -18,6 +18,7 @@ permissions: {}
 
 jobs:
   build:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Build kernels (${{ matrix.arch }})
@@ -70,6 +71,7 @@ jobs:
             silu-and-mul-kernel
 
   test:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     name: Test kernels (UBI ${{ matrix.ubi_version }})

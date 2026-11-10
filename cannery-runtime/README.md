@@ -34,3 +34,11 @@ Run the standalone CPU protocol suite with:
 ```sh
 python -m unittest discover -s tests/cannery -v
 ```
+
+In the Cannery fork, the `Cannery private runtime` workflow runs CPU tests,
+format/lint checks, wheel/sdist builds and installed-package import checks on
+Python3.12/3.13. Shared Python lints remain enabled. Inherited GPU/Nix/release
+workflows run only in `huggingface/kernels`, where their runner groups and release
+credentials exist. They do not constitute Cannery A5 validation. Real A5 evidence
+must be collected explicitly on the configured worker and recorded with revisions,
+runtime identity, device health and retained remote handles.

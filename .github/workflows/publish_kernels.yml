@@ -40,6 +40,7 @@ permissions: {}
 
 jobs:
   linux:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     runs-on: ${{ matrix.platform.runner }}
@@ -86,6 +87,7 @@ jobs:
           path: dist
 
   musllinux:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     runs-on: ${{ matrix.platform.runner }}
@@ -128,6 +130,7 @@ jobs:
           path: dist
 
   windows:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     runs-on: ${{ matrix.platform.runner }}
@@ -176,6 +179,7 @@ jobs:
           path: dist
 
   macos:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     runs-on: ${{ matrix.platform.runner }}
@@ -215,6 +219,7 @@ jobs:
           path: dist
 
   sdist:
+    if: github.repository == 'huggingface/kernels'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -236,7 +241,7 @@ jobs:
   publish-to-pypi:
     name: >-
       Publish Python 🐍 distribution 📦 to PyPI
-    if: startsWith(github.ref, 'refs/tags/') # only publish to PyPI on tag pushes
+    if: github.repository == 'huggingface/kernels' && (startsWith(github.ref, 'refs/tags/') # only publish to PyPI on tag pushes)
     needs:
       - linux
       - musllinux
@@ -261,6 +266,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
 
   github-release:
+    if: github.repository == 'huggingface/kernels'
     name: >-
       Sign the Python 🐍 distribution 📦 with Sigstore
       and upload them to GitHub Release
@@ -306,7 +312,7 @@ jobs:
 
   publish-to-testpypi:
     name: Publish Python 🐍 distribution 📦 to TestPyPI
-    if: github.event_name != 'pull_request'
+    if: github.repository == 'huggingface/kernels' && (github.event_name != 'pull_request')
     needs:
       - linux
       - musllinux

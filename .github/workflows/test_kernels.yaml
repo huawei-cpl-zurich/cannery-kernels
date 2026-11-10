@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.repository == 'huggingface/kernels'
     name: Run kernels tests
     runs-on:
       group: aws-g6-24xlarge
