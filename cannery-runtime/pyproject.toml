@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cannery-kernels-runtime"
-version = "0.1.0"
+version = "0.2.0"
 description = "Offline verified Ascend binary loading for Cannery workers"
 requires-python = ">=3.12"
 license = "Apache-2.0"
