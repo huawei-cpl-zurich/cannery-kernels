@@ -55,6 +55,7 @@ The native library embeds AIV objects and returns checked AscendCL statuses.
 This path imports no CATLASS, executes no author Python and invokes no compiler or
 JIT. The exact pinned CANN/PyTorch NPU runtime is still required. A loaded CATLASS
 object is bound to the current NPU device; load a separate object after switching
-devices. Launch errors propagate after recording in-flight tensor storage on the
+devices or resetting the ACL context. The native bridge enforces a single-context
+lifetime. Launch errors propagate after recording in-flight tensor storage on the
 stream. Run untrusted binaries only in restricted job containers. Schema 1 Ascend C
 packages retain their original void-returning launch contract and dynamic shapes.
