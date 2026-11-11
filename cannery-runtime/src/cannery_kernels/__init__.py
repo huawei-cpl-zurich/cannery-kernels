@@ -10,6 +10,7 @@ import hashlib
 import importlib.metadata
 import io
 import json
+import math
 import platform
 import sys
 import tarfile
@@ -35,6 +36,28 @@ def runtime_fingerprint() -> dict[str, str]:
         "cann": str(get_cann_version()),
         "soc": __import__("torch").npu.get_device_name(),
     }
+
+
+def _specialization_shapes(value: Any) -> frozenset[tuple[int, ...]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 4:
+        raise ValueError("Expected one to four static specializations")
+    shapes = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"shape", "dtype"}:
+            raise ValueError("Invalid specialization")
+        shape = item["shape"]
+        if (
+            item["dtype"] != "float32"
+            or not isinstance(shape, list)
+            or not 1 <= len(shape) <= 4
+            or not all(type(v) is int and 0 <= v <= 1048576 for v in shape)
+            or math.prod(shape) > 1048576
+        ):
+            raise ValueError("Unsupported specialization")
+        shapes.append(tuple(shape))
+    if len(set(shapes)) != len(shapes) or not any(math.prod(s) for s in shapes):
+        raise ValueError("Expected distinct shapes and at least one nonempty variant")
+    return frozenset(shapes)
 
 
 def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any], bytes]:
@@ -63,6 +86,13 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
         if set(contents) != {"metadata.json", "kernel.so"}:
             raise ValueError("Missing package members")
         metadata = json.loads(contents["metadata.json"])
+        catlass = (
+            type(metadata["schema_version"]) is int
+            and metadata["schema_version"] == 2
+            and metadata["abi"] == "catlass-unary-f32-v1"
+        )
+        if catlass:
+            _specialization_shapes(metadata["specializations"])
         if (
             set(metadata)
             != {
@@ -74,9 +104,12 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
                 "runtime",
                 "compiler",
             }
+            | ({"specializations"} if catlass else set())
             or type(metadata["schema_version"]) is not int
-            or metadata["schema_version"] != 1
-            or metadata["abi"] != "unary-f32-v1"
+            or (
+                not catlass
+                and (metadata["schema_version"] != 1 or metadata["abi"] != "unary-f32-v1")
+            )
             or metadata["device"] != "a5"
             or not isinstance(metadata["compiler"], str)
             or not metadata["compiler"]
@@ -107,6 +140,15 @@ class CanneryKernel:
 
     def __init__(self, library: bytes, metadata: dict[str, Any]) -> None:
         self.metadata = metadata
+        self._catlass = metadata["abi"] == "catlass-unary-f32-v1"
+        self._shapes = (
+            _specialization_shapes(metadata["specializations"]) if self._catlass else None
+        )
+        self._device = None
+        if self._catlass:
+            import torch
+
+            self._device = torch.npu.current_device()
         self._directory = tempfile.TemporaryDirectory(prefix="cannery-kernel-")
         path = Path(self._directory.name) / "kernel.so"
         try:
@@ -120,7 +162,7 @@ class CanneryKernel:
                 ctypes.c_void_p,
                 ctypes.c_uint64,
             ]
-            self._launch.restype = None
+            self._launch.restype = ctypes.c_int if self._catlass else None
         except (OSError, AttributeError):
             self._directory.cleanup()
             raise CanneryPackageError(
@@ -132,15 +174,21 @@ class CanneryKernel:
         import torch_npu  # noqa: F401 - registers the NPU backend
 
         if not isinstance(x, torch.Tensor) or x.dtype != torch.float32 or x.device.type != "npu":
-            raise CanneryPackageError("unary-f32-v1 expects a float32 NPU tensor")
+            raise CanneryPackageError("Unary ABI expects a float32 NPU tensor")
+        if self._catlass and (tuple(x.shape) not in self._shapes or x.device.index != self._device):
+            raise CanneryPackageError("Shape or device is outside the admitted CATLASS variant")
         with torch.npu.device(x.device):
             contiguous = x.contiguous()
             output = torch.empty_like(contiguous)
             if x.numel():
                 stream = torch.npu.current_stream(x.device)
-                self._launch(stream.npu_stream, contiguous.data_ptr(), output.data_ptr(), x.numel())
+                status = self._launch(
+                    stream.npu_stream, contiguous.data_ptr(), output.data_ptr(), x.numel()
+                )
                 contiguous.record_stream(stream)
                 output.record_stream(stream)
+                if self._catlass and status != 0:
+                    raise CanneryPackageError(f"CATLASS native launch failed: {status}")
             return output
 
 

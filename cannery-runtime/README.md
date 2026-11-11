@@ -42,3 +42,20 @@ workflows run only in `huggingface/kernels`, where their runner groups and relea
 credentials exist. They do not constitute Cannery A5 validation. Real A5 evidence
 must be collected explicitly on the configured worker and recorded with revisions,
 runtime identity, device health and retained remote handles.
+
+## Static CATLASS packages (runtime 0.2+)
+
+Schema 2 / `catlass-unary-f32-v1` packages contain the same two files, with an
+explicit `specializations` array of `{shape: [...], dtype: "float32"}` records.
+One to four distinct shapes, one to four dimensions and at most 1,048,576 elements
+per shape are admitted. At least one variant must be nonempty. Inputs outside the
+declared shape/dtype domain are rejected; empty admitted inputs skip native calls.
+The native library embeds AIV objects and returns checked AscendCL statuses.
+
+This path imports no CATLASS, executes no author Python and invokes no compiler or
+JIT. The exact pinned CANN/PyTorch NPU runtime is still required. A loaded CATLASS
+object is bound to the current NPU device; load a separate object after switching
+devices or resetting the ACL context. The native bridge enforces a single-context
+lifetime. Launch errors propagate after recording in-flight tensor storage on the
+stream. Run untrusted binaries only in restricted job containers. Schema 1 Ascend C
+packages retain their original void-returning launch contract and dynamic shapes.
