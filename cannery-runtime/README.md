@@ -1,6 +1,6 @@
 # Cannery private runtime
 
-Install `cannery-kernels-runtime` from this directory into an isolated A5 worker
+Install `cannery-kernels-runtime` from this directory into an isolated Ascend worker
 with its matching PyTorch, torch-npu and CANN runtime already provisioned.
 This small distribution has no Hub client, dependency downloader or Rust extension.
 
@@ -17,7 +17,7 @@ with a healthy leased device and resource/deadline limits. Keep the loaded kerne
 alive until its asynchronous calls finish. No package code runs in the API process.
 
 The initial format is an uncompressed tar containing exactly `metadata.json` and
-`kernel.so`, at most64 MiB total. Metadata schema1 declares device`a5`, ABI
+`kernel.so`, at most64 MiB total. Metadata schema1 declares device `a3` or `a5`, ABI
 `unary-f32-v1`, source SHA256, library SHA256, compiler identity, and exact runtime
 fingerprint: machine, Python major/minor, torch, torch-npu, CANN and SoC. Incompatible
 packages fail before `dlopen`. No source files or executable Python wrappers are
@@ -37,7 +37,7 @@ python -m unittest discover -s tests/cannery -v
 
 In the Cannery fork, the `Cannery private runtime` workflow runs CPU tests,
 format/lint checks, wheel/sdist builds and installed-package import checks on
-Python3.12/3.13. Shared Python lints remain enabled. Inherited GPU/Nix/release
+Python 3.11/3.12/3.13. Shared Python lints remain enabled. Inherited GPU/Nix/release
 workflows run only in `huggingface/kernels`, where their runner groups and release
 credentials exist. They do not constitute Cannery A5 validation. Real A5 evidence
 must be collected explicitly on the configured worker and recorded with revisions,
@@ -59,3 +59,18 @@ devices or resetting the ACL context. The native bridge enforces a single-contex
 lifetime. Launch errors propagate after recording in-flight tensor storage on the
 stream. Run untrusted binaries only in restricted job containers. Schema 1 Ascend C
 packages retain their original void-returning launch contract and dynamic shapes.
+
+
+## A3 native packages (runtime 0.3+)
+
+Schema 1 / `unary-f32-v1` supports the registered A3 track reporting an
+`Ascend910B` SoC and the A5 track reporting `Ascend950`. Device and SoC must agree,
+and the entire runtime fingerprint must match before loading. An A3 package
+cannot load in an A5 runtime or conversely. Python 3.11 is supported for the
+registered A3 runtime; wheel installation never provisions CANN or PyTorch.
+CATLASS DSL schema 2 remains A5-only. Compatible C++ headers may be compiled by
+the Ascend C producer; the runtime ABI is unchanged.
+
+CPU compatibility tests do not constitute A3/A5 execution evidence. Record actual
+source/toolchain/runtime revisions, selected physical device and fresh health
+with every hardware validation.

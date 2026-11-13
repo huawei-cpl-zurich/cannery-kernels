@@ -50,6 +50,41 @@ def package(change=None, extra=False):
 
 
 class PackageTests(unittest.TestCase):
+    def test_a3_native_package_and_cross_device_rejection_before_loading(self):
+        def a3(metadata):
+            metadata["device"] = "a3"
+            metadata["runtime"].update(soc="Ascend910B4-1", python="3.11", cann="9.1.0")
+
+        data, sha, metadata = package(a3)
+        self.assertEqual(loader.verify_cannery_package(data, sha)[0], metadata)
+        with patch.object(loader, "runtime_fingerprint", return_value=metadata["runtime"]):
+            library = SimpleNamespace(cannery_launch=MagicMock())
+            with patch.object(loader.ctypes, "CDLL", return_value=library):
+                kernel = loader.load_cannery_package(data, sha, trust_remote_code=True)
+                kernel._directory.cleanup()
+        for device, soc in [
+            ("a3", "Ascend950"),
+            ("a5", "Ascend910B4-1"),
+            ("a3", "unknown"),
+        ]:
+            bad, digest, _ = package(
+                lambda m, device=device, soc=soc: (
+                    m.update(device=device),
+                    m["runtime"].update(soc=soc),
+                )
+            )
+            with self.assertRaises(loader.CanneryPackageError):
+                loader.verify_cannery_package(bad, digest)
+        with patch.object(loader.ctypes, "CDLL", side_effect=AssertionError("must not load")):
+            for change in [{"soc": "Ascend950"}, {"cann": "9.2.0"}, {"python": "3.12"}]:
+                with patch.object(
+                    loader,
+                    "runtime_fingerprint",
+                    return_value=metadata["runtime"] | change,
+                ):
+                    with self.assertRaises(loader.CanneryPackageError):
+                        loader.load_cannery_package(data, sha, trust_remote_code=True)
+
     def test_verified_and_no_execution_before_trust_or_compatibility(self):
         data, sha, metadata = package()
         self.assertEqual(loader.verify_cannery_package(data, sha)[0], metadata)
@@ -67,7 +102,8 @@ class PackageTests(unittest.TestCase):
             library = SimpleNamespace(cannery_launch=MagicMock())
             with patch.object(loader.ctypes, "CDLL", return_value=library) as native:
                 with patch(
-                    "socket.create_connection", side_effect=AssertionError("network forbidden")
+                    "socket.create_connection",
+                    side_effect=AssertionError("network forbidden"),
                 ):
                     kernel = loader.load_cannery_package(data, sha, trust_remote_code=True)
                 native.assert_called_once()

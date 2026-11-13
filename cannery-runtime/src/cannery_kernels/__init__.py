@@ -1,4 +1,4 @@
-"""Offline loading of pinned Cannery A5 packages inside an isolated runtime.
+"""Offline loading of pinned Cannery Ascend packages inside an isolated runtime.
 
 This entry point never resolves Hub repositories or downloads dependencies.
 Native libraries execute code: callers must explicitly trust the package and
@@ -19,6 +19,15 @@ from pathlib import Path
 from typing import Any
 
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024
+
+
+def device_matches_soc(device: str, soc: str) -> bool:
+    return isinstance(soc, str) and (
+        device == "a3"
+        and soc.startswith("Ascend910B")
+        or device == "a5"
+        and soc.startswith("Ascend950")
+    )
 
 
 class CanneryPackageError(ValueError):
@@ -110,7 +119,9 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
                 not catlass
                 and (metadata["schema_version"] != 1 or metadata["abi"] != "unary-f32-v1")
             )
-            or metadata["device"] != "a5"
+            or metadata["device"] not in {"a3", "a5"}
+            or catlass
+            and metadata["device"] != "a5"
             or not isinstance(metadata["compiler"], str)
             or not metadata["compiler"]
             or not isinstance(metadata["source_sha256"], str)
@@ -119,6 +130,7 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
             or set(metadata["runtime"])
             != {"machine", "python", "torch", "torch_npu", "cann", "soc"}
             or not all(isinstance(v, str) and v for v in metadata["runtime"].values())
+            or not device_matches_soc(metadata["device"], metadata["runtime"]["soc"])
             or hashlib.sha256(contents["kernel.so"]).hexdigest() != metadata["library_sha256"]
         ):
             raise ValueError("Invalid package metadata")
@@ -205,7 +217,7 @@ def load_cannery_package(
         raise CanneryPackageError("Required CANN/PyTorch NPU runtime unavailable") from None
     if (
         current["machine"] != "aarch64"
-        or not current["soc"].startswith("Ascend950")
+        or not device_matches_soc(metadata["device"], current["soc"])
         or metadata["runtime"] != current
     ):
         raise CanneryPackageError("Package runtime fingerprint mismatch")
