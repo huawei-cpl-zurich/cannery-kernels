@@ -97,7 +97,7 @@ class _Transport(httpx.BaseTransport):
         self.transport = httpx.HTTPTransport(retries=0)
 
     def handle_request(self, request):
-        if _origin(str(request.url)) != self.origin:
+        if _origin(str(request.url.copy_with(query=None))) != self.origin:
             raise ValueError("Private Hub requests cannot leave the configured origin")
         deadline = _DEADLINE.get() or monotonic() + 60
         remaining = deadline - monotonic()
@@ -155,10 +155,18 @@ def _budget():
 
 def maybe_load(api, repo_id, revision, backend, trust_remote_code):
     """Return a Cannery module or None for ordinary Hub repositories."""
-    if not os.environ.get("HF_ENDPOINT") or revision is None or backend not in {None, "cann"}:
+    endpoint = os.environ.get("HF_ENDPOINT")
+    if (
+        not endpoint
+        or _origin(endpoint) == "https://huggingface.co"
+        or revision is None
+        or backend not in {None, "cann"}
+    ):
         return None
     if constants.HF_HUB_OFFLINE:
-        raise ValueError("Private Cannery get_kernel requires online publication verification")
+        if revision.startswith("release-"):
+            raise ValueError("Private Cannery get_kernel requires online publication verification")
+        return None
     with _budget():
         info = api.repo_info(repo_id, repo_type="kernel", revision=revision)
         descriptor = getattr(info, "cannery", None)

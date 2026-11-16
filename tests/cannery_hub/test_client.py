@@ -210,3 +210,35 @@ def test_ordinary_repository_keeps_upstream_loading(hub, monkeypatch):
     module = importlib.import_module("kernels.load")
     monkeypatch.setattr(module, "get_kernel_with_resolver", lambda **kwargs: "upstream")
     assert get_kernel("team/hello", revision="a" * 40, backend="cann") == "upstream"
+
+
+def test_public_and_ordinary_offline_keep_upstream(hub, monkeypatch):
+    import importlib
+
+    module = importlib.import_module("kernels.load")
+    monkeypatch.setattr(module, "get_kernel_with_resolver", lambda **kwargs: "cached")
+    monkeypatch.setattr(bridge.constants, "HF_HUB_OFFLINE", True)
+    assert get_kernel("team/ordinary", revision="a" * 40) == "cached"
+    monkeypatch.setenv("HF_ENDPOINT", "https://huggingface.co")
+    assert get_kernel("team/ordinary", revision="a" * 40) == "cached"
+
+
+def test_local_override_does_not_probe_failed_endpoint(hub, monkeypatch, tmp_path):
+    import importlib
+
+    state, _ = hub
+    state.status = 503
+    monkeypatch.setenv("LOCAL_KERNELS", "team/hello=" + str(tmp_path))
+    module = importlib.import_module("kernels.load")
+    monkeypatch.setattr(module, "get_kernel_with_resolver", lambda **kwargs: "local")
+    assert load(state, trust_remote_code=True) == "local"
+    assert state.requests == []
+
+
+def test_same_origin_query_is_allowed(hub):
+    _, endpoint = hub
+    with httpx.Client(transport=bridge._Transport(endpoint)) as client:
+        assert (
+            client.get(endpoint + "/api/kernels/team/hello?recursive=false").status_code
+            == 401
+        )
