@@ -19,6 +19,7 @@ class FakeTensor:
         self.pointer = FakeTensor.next_pointer
         FakeTensor.next_pointer += 4096
         self.contiguous, self.streams = True, []
+        self.format = 2
 
     def is_contiguous(self):
         return self.contiguous
@@ -51,8 +52,20 @@ class TensorLoaderTests(unittest.TestCase):
             ),
         )
         self.native = MagicMock(return_value=0)
+
+        def empty(shape, dtype, device, acl_format):
+            self.assertEqual(acl_format, 2)
+            return FakeTensor(shape, dtype, device)
+
         modules = patch.dict(
-            "sys.modules", {"torch": torch, "torch_npu": SimpleNamespace()}
+            "sys.modules",
+            {
+                "torch": torch,
+                "torch_npu": SimpleNamespace(
+                    get_npu_format=lambda t: t.format,
+                    empty_with_format=empty,
+                ),
+            },
         )
         modules.start()
         library = patch(
@@ -120,6 +133,13 @@ class TensorLoaderTests(unittest.TestCase):
         self.native.return_value = 0
         self.kernel.forward(self.x, self.cache, offset=1)
         self.assertEqual(self.native.call_count, 2)
+
+    def test_logically_contiguous_private_format_rejected_before_native(self):
+        self.x.format = 29
+        self.assertTrue(self.x.is_contiguous())
+        with self.assertRaisesRegex(CanneryPackageError, "ND-format"):
+            self.kernel.forward(self.x, self.cache, offset=1)
+        self.native.assert_not_called()
 
     def test_native_exception_records_inflight_storage(self):
         self.native.side_effect = RuntimeError("device disconnected")

@@ -112,8 +112,10 @@ Tensor metadata is bounded at 256 KiB; legacy schemas retain their 16 KiB limit.
 `forward(*inputs, **scalars)` accepts positional tensors in the declared order
 and keyword-only scalar attributes, and returns a dictionary of named outputs.
 It allocates fresh output tensors and returns mutable aliases as the same input
-objects. Contiguous inputs on the bound device are required; no implicit cast or
-materialization occurs. Mutable inputs cannot overlap another input. Every input
+objects. Contiguous ND-format (2) inputs on the bound device are required; no implicit cast or
+materialization occurs. Logical contiguity alone does not establish physical
+layout: private formats such as FRACTAL_NZ are rejected. Fresh outputs are
+allocated explicitly in ND format. Mutable inputs cannot overlap another input. Every input
 and output records the stream even after a partial enqueue error. Calls do not
 synchronize; callers must synchronize to observe asynchronous failures. After a
 failed call, mutable state may have changed and must be reset before retrying.

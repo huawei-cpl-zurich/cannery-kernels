@@ -55,6 +55,7 @@ class TensorKernel:
         unless an output explicitly aliases them. No implicit copies or casts.
         """
         import torch
+        import torch_npu
 
         interface = self._variants[0]
         if len(inputs) != len(interface.inputs) or set(scalars) != {
@@ -67,8 +68,11 @@ class TensorKernel:
                 or tensor.device.type != "npu"
                 or tensor.device.index != self._device
                 or not tensor.is_contiguous()
+                or torch_npu.get_npu_format(tensor) != 2
             ):
-                raise CanneryPackageError("Expected contiguous NPU tensors on the bound device")
+                raise CanneryPackageError(
+                    "Expected contiguous ND-format NPU tensors on the bound device"
+                )
         try:
             scalar_bits = tuple(
                 bytes(scalar_descriptor(s.kind, scalars[s.name])) for s in interface.scalars
@@ -107,10 +111,11 @@ class TensorKernel:
             outputs = {
                 spec.name: by_name[spec.alias]
                 if spec.alias is not None
-                else torch.empty(
+                else torch_npu.empty_with_format(
                     spec.shape,
                     dtype=getattr(torch, spec.dtype),
                     device=inputs[0].device,
+                    acl_format=2,
                 )
                 for spec in selected.outputs
             }
