@@ -83,7 +83,7 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
             for member in archive:
                 if member.name not in {"metadata.json", "kernel.so"} or member.name in contents:
                     raise ValueError("Unexpected package members")
-                limit = 16384 if member.name == "metadata.json" else MAX_PACKAGE_BYTES - 16384
+                limit = 262144 if member.name == "metadata.json" else MAX_PACKAGE_BYTES - 16384
                 if not member.isfile() or member.size <= 0 or member.size > limit:
                     raise ValueError("Invalid package member")
                 stream = archive.extractfile(member)
@@ -95,6 +95,17 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
         if set(contents) != {"metadata.json", "kernel.so"}:
             raise ValueError("Missing package members")
         metadata = json.loads(contents["metadata.json"])
+        tensor = (
+            type(metadata["schema_version"]) is int
+            and metadata["schema_version"] == 3
+            and metadata["abi"] == "tensor-v2"
+        )
+        if tensor:
+            from .tensor_signatures import parse_tensor_variants
+
+            parse_tensor_variants(metadata["variants"])
+        elif len(contents["metadata.json"]) > 16384:
+            raise ValueError("Legacy metadata exceeds budget")
         catlass = (
             type(metadata["schema_version"]) is int
             and metadata["schema_version"] == 2
@@ -113,14 +124,17 @@ def verify_cannery_package(package: bytes, sha256: str) -> tuple[dict[str, Any],
                 "runtime",
                 "compiler",
             }
-            | ({"specializations"} if catlass else set())
+            | ({"specializations"} if catlass else {"variants"} if tensor else set())
             or type(metadata["schema_version"]) is not int
             or (
                 not catlass
+                and not tensor
                 and (metadata["schema_version"] != 1 or metadata["abi"] != "unary-f32-v1")
             )
             or metadata["device"] not in {"a3", "a5"}
             or catlass
+            and metadata["device"] != "a5"
+            or tensor
             and metadata["device"] != "a5"
             or not isinstance(metadata["compiler"], str)
             or not metadata["compiler"]
@@ -211,6 +225,8 @@ def load_cannery_package(
     if not trust_remote_code:
         raise CanneryPackageError("Native package loading requires trust_remote_code=True")
     metadata, library = verify_cannery_package(package, sha256)
+    if metadata["abi"] == "tensor-v2":
+        raise CanneryPackageError("Tensor package execution is not enabled in this runtime")
     try:
         current = runtime_fingerprint()
     except (ImportError, importlib.metadata.PackageNotFoundError):

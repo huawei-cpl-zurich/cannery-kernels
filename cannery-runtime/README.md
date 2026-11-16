@@ -79,8 +79,8 @@ with every hardware validation.
 
 `cannery_kernels.tensor_abi` and its packaged `tensor_abi.h` define the native
 `cannery_launch_tensor_v2` bridge for multiple tensors and typed scalar arguments.
-The existing package verifier still accepts only the unary ABIs above; this
-contract does not enable tensor packages or relax runtime isolation.
+The package verifier can inspect schema 3 / `tensor-v2` packages, but execution
+is not yet enabled. This contract does not relax runtime isolation.
 
 The bridge borrows contiguous tensor storage on the caller's current stream.
 Tensor descriptors carry a device address, up to four dimensions and element
@@ -98,3 +98,16 @@ nonzero statuses must propagate, and synchronization must surface asynchronous
 device failures. Descriptors transfer no ownership. Callers retain allocations
 through completion and enforce signature and mutation rules before native calls.
 This ABI defines no allocation, synchronization, compilation or Python execution.
+
+Schema 3 retains the two-file package and runtime/source/library identities. Its
+`variants` array contains 1–32 static records with ordered `inputs`, `outputs` and
+`scalars` lists. Tensor records contain `name`, `shape` and `dtype`; outputs also
+require `alias` (null for fresh storage, or an input name). An alias declares that
+input mutable and must match its dtype/shape. Each mutable input has one returned
+output alias so validation can compare its final state. Other inputs are read-only.
+Scalars declare `name`, `kind` and an exact `value`. Variant dispatch domains are
+unique by input shapes/dtypes and scalar bit patterns; their ordered named
+interfaces must agree. Schema 3 is A5-only until A3 integration is validated.
+Tensor metadata is bounded at 256 KiB; legacy schemas retain their 16 KiB limit.
+`load_cannery_package` rejects schema 3 before loading any native library in this
+reader-only stage. Existing unary packages remain executable.
