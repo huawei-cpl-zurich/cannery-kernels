@@ -20,6 +20,13 @@ class FakeTensor:
         FakeTensor.next_pointer += 4096
         self.contiguous, self.streams = True, []
         self.format = 2
+        self.negative, self.conjugate = False, False
+
+    def is_neg(self):
+        return self.negative
+
+    def is_conj(self):
+        return self.conjugate
 
     def is_contiguous(self):
         return self.contiguous
@@ -139,6 +146,14 @@ class TensorLoaderTests(unittest.TestCase):
         self.assertTrue(self.x.is_contiguous())
         with self.assertRaisesRegex(CanneryPackageError, "ND-format"):
             self.kernel.forward(self.x, self.cache, offset=1)
+        self.native.assert_not_called()
+
+    def test_lazy_views_rejected_without_materialization(self):
+        for attribute in ["negative", "conjugate"]:
+            setattr(self.x, attribute, True)
+            with self.assertRaisesRegex(CanneryPackageError, "unresolved"):
+                self.kernel.forward(self.x, self.cache, offset=1)
+            setattr(self.x, attribute, False)
         self.native.assert_not_called()
 
     def test_native_exception_records_inflight_storage(self):

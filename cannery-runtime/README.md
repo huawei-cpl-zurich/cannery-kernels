@@ -114,7 +114,8 @@ and keyword-only scalar attributes, and returns a dictionary of named outputs.
 It allocates fresh output tensors and returns mutable aliases as the same input
 objects. Contiguous ND-format (2) inputs on the bound device are required; no implicit cast or
 materialization occurs. Logical contiguity alone does not establish physical
-layout: private formats such as FRACTAL_NZ are rejected. Fresh outputs are
+layout: private formats such as FRACTAL_NZ and unresolved negative/conjugate
+views are rejected. Fresh outputs are
 allocated explicitly in ND format. Mutable inputs cannot overlap another input. Every input
 and output records the stream even after a partial enqueue error. Calls do not
 synchronize; callers must synchronize to observe asynchronous failures. After a

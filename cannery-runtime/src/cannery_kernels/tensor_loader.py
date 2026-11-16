@@ -73,6 +73,10 @@ class TensorKernel:
                 raise CanneryPackageError(
                     "Expected contiguous ND-format NPU tensors on the bound device"
                 )
+            if tensor.is_neg() or tensor.is_conj():
+                raise CanneryPackageError(
+                    "Native ABI rejects unresolved negative or conjugate views"
+                )
         try:
             scalar_bits = tuple(
                 bytes(scalar_descriptor(s.kind, scalars[s.name])) for s in interface.scalars
