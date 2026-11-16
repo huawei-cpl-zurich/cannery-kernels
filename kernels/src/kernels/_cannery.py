@@ -81,11 +81,14 @@ class _Stream(httpx.SyncByteStream):
 
     def __iter__(self):
         count = 0
-        for chunk in self.stream:
-            count += len(chunk)
-            if monotonic() >= self.deadline or count > self.limit:
-                raise ValueError("Private Hub transfer deadline or size exceeded")
-            yield chunk
+        try:
+            for chunk in self.stream:
+                count += len(chunk)
+                if monotonic() >= self.deadline or count > self.limit:
+                    raise ValueError("Private Hub transfer deadline or size exceeded")
+                yield chunk
+        except httpx.TransportError:
+            raise ValueError("Private Hub stream failed; retry the pinned load") from None
 
     def close(self):
         self.stream.close()
@@ -104,7 +107,17 @@ class _Transport(httpx.BaseTransport):
         if remaining <= 0:
             raise ValueError("Private Hub transfer deadline exceeded")
         request.extensions["timeout"] = dict.fromkeys(["connect", "read", "write", "pool"], min(15, remaining))
-        response = self.transport.handle_request(request)
+        request.headers["Accept-Encoding"] = "identity"
+        try:
+            response = self.transport.handle_request(request)
+        except httpx.TransportError:
+            raise ValueError("Private Hub connection failed; retry the pinned load") from None
+        if response.status_code == 429 or response.status_code >= 500:
+            response.close()
+            raise ValueError("Private Hub temporarily unavailable; retry the pinned load")
+        if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+            response.close()
+            raise ValueError("Encoded private Hub responses are unsupported")
         limit = 128 * 1024 if "/api/kernels/" in request.url.path else 64 * 1024 * 1024
         response.stream = _Stream(response.stream, deadline, limit)
         return response

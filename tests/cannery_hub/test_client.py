@@ -242,3 +242,27 @@ def test_same_origin_query_is_allowed(hub):
             client.get(endpoint + "/api/kernels/team/hello?recursive=false").status_code
             == 401
         )
+
+
+@pytest.mark.parametrize(
+    "status,headers",
+    [(429, {"Retry-After": "3600"}), (200, {"Content-Encoding": "gzip"})],
+)
+def test_encoding_and_retry_after_cannot_bypass_limits(status, headers, monkeypatch):
+    import time
+
+    monkeypatch.setattr(
+        time, "sleep", lambda _: pytest.fail("Unexpected upstream retry sleep")
+    )
+    with bridge._Transport("http://localhost:8095") as transport:
+        transport.transport.close()
+        transport.transport = httpx.MockTransport(
+            lambda request: httpx.Response(
+                status, headers=headers, stream=httpx.ByteStream(b"data")
+            )
+        )
+        with bridge._budget(), httpx.Client(transport=transport) as client:
+            with pytest.raises(ValueError, match="temporarily unavailable|Encoded"):
+                client.get(
+                    "http://localhost:8095/kernels/team/hello/resolve/revision/kernel.tar"
+                )
