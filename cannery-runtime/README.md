@@ -74,3 +74,27 @@ the Ascend C producer; the runtime ABI is unchanged.
 CPU compatibility tests do not constitute A3/A5 execution evidence. Record actual
 source/toolchain/runtime revisions, selected physical device and fresh health
 with every hardware validation.
+
+## Tensor bridge contract (not yet admitted)
+
+`cannery_kernels.tensor_abi` and its packaged `tensor_abi.h` define the native
+`cannery_launch_tensor_v2` bridge for multiple tensors and typed scalar arguments.
+The existing package verifier still accepts only the unary ABIs above; this
+contract does not enable tensor packages or relax runtime isolation.
+
+The bridge borrows contiguous tensor storage on the caller's current stream.
+Tensor descriptors carry a device address, up to four dimensions and element
+strides, and a dtype identifier (float32, float16, bfloat16, int8, int32, int64 or
+bool). Scalars encode exact bool, signed int64 or finite binary64 values; integer
+and boolean coercions are rejected. Rank-zero tensor arguments use a typed scalar
+instead. Empty tensors may have null addresses; whether an empty case can launch
+is part of the producer's admitted signature, not an automatic skip rule.
+
+Factories reject overflow, misalignment and unsupported shapes before ctypes
+conversion. `validate_argument_budget` checks canonical descriptors, at most 32
+inputs, 32 outputs and 32 scalars, one million elements per tensor, and 32 MiB of
+aggregate tensor bytes per call. Native return zero means successful enqueue;
+nonzero statuses must propagate, and synchronization must surface asynchronous
+device failures. Descriptors transfer no ownership. Callers retain allocations
+through completion and enforce signature and mutation rules before native calls.
+This ABI defines no allocation, synchronization, compilation or Python execution.

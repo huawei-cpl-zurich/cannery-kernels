@@ -12,6 +12,9 @@ license = "Apache-2.0"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+cannery_kernels = ["*.h"]
+
 [tool.ruff]
 line-length = 100
 lint.select = ["E", "F", "I", "UP", "B"]
