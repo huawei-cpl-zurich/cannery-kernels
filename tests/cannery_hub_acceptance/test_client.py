@@ -4,6 +4,7 @@ import hashlib
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -286,3 +287,36 @@ def test_parent_bounds_all_worker_waits_and_keeps_token_off_argv(hub, monkeypatc
     monkeypatch.setattr(bridge.subprocess, "run", stalled)
     with pytest.raises(ValueError, match="60-second deadline"):
         load(state, trust_remote_code=True)
+
+
+def test_cache_lock_contention_has_a_process_deadline(hub, monkeypatch):
+    import os
+    from filelock import FileLock
+    from huggingface_hub.file_download import repo_folder_name
+
+    state, endpoint = hub
+    root = (
+        Path(os.environ["KERNELS_CACHE"])
+        / "cannery"
+        / hashlib.sha256(endpoint.encode()).hexdigest()
+    )
+    lock = (
+        root
+        / ".locks"
+        / repo_folder_name(repo_id="team/hello", repo_type="kernel")
+        / (state.descriptor["package_sha256"] + ".lock")
+    )
+    lock.parent.mkdir(parents=True)
+    run = bridge.subprocess.run
+
+    def bounded(*args, **kwargs):
+        kwargs["timeout"] = 3
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(bridge.subprocess, "run", bounded)
+    with FileLock(str(lock)), pytest.raises(ValueError, match="deadline"):
+        load(state, trust_remote_code=True)
+    assert any(
+        method == "HEAD" and path.endswith("kernel.tar")
+        for method, path in state.requests
+    )
