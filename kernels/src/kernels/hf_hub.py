@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from huggingface_hub import HfApi, constants
 
+from kernels._cannery import configure_api
 from kernels._rust import Oid
 from kernels._system import glibc_version
 from kernels.backends import _select_backend
@@ -31,7 +32,7 @@ def _get_hf_api(user_agent: str | dict | None = None) -> HfApi:
     from . import __version__
 
     if constants.HF_HUB_DISABLE_TELEMETRY:
-        return HfApi(library_name="kernels", library_version=__version__, user_agent=None)
+        return configure_api(HfApi(library_name="kernels", library_version=__version__, user_agent=None))
 
     parts: list[str] = []
 
@@ -68,7 +69,7 @@ def _get_hf_api(user_agent: str | dict | None = None) -> HfApi:
     if glibc is not None:
         parts.append(f"glibc/{glibc}")
 
-    return HfApi(library_name="kernels", library_version=__version__, user_agent="; ".join(parts))
+    return configure_api(HfApi(library_name="kernels", library_version=__version__, user_agent="; ".join(parts)))
 
 
 def _get_cache_dir() -> str | None:

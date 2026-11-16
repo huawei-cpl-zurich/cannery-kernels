@@ -157,10 +157,20 @@ def get_kernel(
     """
     api = _get_hf_api(user_agent=user_agent)
 
+    from kernels._cannery import maybe_load
+
+    if revision is not None and version is not None:
+        raise ValueError("Cannot specify both revision and version")
+    local_overrides = _get_local_kernel_overrides()
+    has_override = isinstance(local_overrides, RepoPathsResolver) and repo_id in local_overrides.local_kernels
+    cannery = None if has_override else maybe_load(api, repo_id, revision, backend, trust_remote_code)
+    if cannery is not None:
+        return cannery
+
     kernel_version = revision_or_version(revision=revision, version=version)
 
     resolvers = [
-        _get_local_kernel_overrides(),
+        local_overrides,
         (
             HubCacheResolver(trust_remote_code=trust_remote_code)
             if constants.HF_HUB_OFFLINE
