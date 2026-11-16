@@ -21,6 +21,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.100.0
-      - run: pip install ./kernels ./cannery-runtime pytest 'ruff==0.15.10'
+      - run: pip install ./kernels ./cannery-runtime pytest 'ruff==0.15.10' 'huggingface-hub==1.33.0'
       - run: ruff check kernels/src/kernels/_cannery.py tests/cannery_hub && ruff format --check kernels/src/kernels/_cannery.py tests/cannery_hub
       - run: pytest -q tests/cannery_hub tests/cannery_hub_acceptance
