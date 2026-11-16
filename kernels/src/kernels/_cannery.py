@@ -6,20 +6,14 @@ import json
 import os
 import re
 import stat
-from contextlib import contextmanager
-from contextvars import ContextVar
+import subprocess
+import sys
 from pathlib import Path
-from time import monotonic
 from types import ModuleType
 from urllib.parse import urlsplit
 
 import httpx
 from huggingface_hub import constants, set_client_factory
-from huggingface_hub.utils._http import default_client_factory
-
-_PRIVATE_ENDPOINT = None
-
-_DEADLINE: ContextVar[float | None] = ContextVar("cannery_deadline", default=None)
 
 
 def _origin(url: str) -> str:
@@ -76,19 +70,16 @@ def _token(endpoint: str) -> str | bool:
 
 
 class _Stream(httpx.SyncByteStream):
-    def __init__(self, stream, deadline, limit):
-        self.stream, self.deadline, self.limit = stream, deadline, limit
+    def __init__(self, stream, limit):
+        self.stream, self.limit = stream, limit
 
     def __iter__(self):
         count = 0
-        try:
-            for chunk in self.stream:
-                count += len(chunk)
-                if monotonic() >= self.deadline or count > self.limit:
-                    raise ValueError("Private Hub transfer deadline or size exceeded")
-                yield chunk
-        except httpx.TransportError:
-            raise ValueError("Private Hub stream failed; retry the pinned load") from None
+        for chunk in self.stream:
+            count += len(chunk)
+            if count > self.limit:
+                raise ValueError("Private Hub transfer size exceeded")
+            yield chunk
 
     def close(self):
         self.stream.close()
@@ -102,11 +93,7 @@ class _Transport(httpx.BaseTransport):
     def handle_request(self, request):
         if _origin(str(request.url.copy_with(query=None))) != self.origin:
             raise ValueError("Private Hub requests cannot leave the configured origin")
-        deadline = _DEADLINE.get() or monotonic() + 60
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise ValueError("Private Hub transfer deadline exceeded")
-        request.extensions["timeout"] = dict.fromkeys(["connect", "read", "write", "pool"], min(15, remaining))
+        request.extensions["timeout"] = dict.fromkeys(["connect", "read", "write", "pool"], 15)
         request.headers["Accept-Encoding"] = "identity"
         try:
             response = self.transport.handle_request(request)
@@ -119,7 +106,7 @@ class _Transport(httpx.BaseTransport):
             response.close()
             raise ValueError("Encoded private Hub responses are unsupported")
         limit = 128 * 1024 if "/api/kernels/" in request.url.path else 64 * 1024 * 1024
-        response.stream = _Stream(response.stream, deadline, limit)
+        response.stream = _Stream(response.stream, limit)
         return response
 
     def close(self):
@@ -128,24 +115,10 @@ class _Transport(httpx.BaseTransport):
 
 def configure_api(api):
     """Explicit private endpoints never inherit an unrelated cached Hub token."""
-    global _PRIVATE_ENDPOINT
     endpoint = os.environ.get("HF_ENDPOINT")
-    if not endpoint or _origin(endpoint) == "https://huggingface.co":
-        if _PRIVATE_ENDPOINT is not None:
-            set_client_factory(default_client_factory)
-            _PRIVATE_ENDPOINT = None
-        return api
-    api.endpoint = endpoint.rstrip("/")
-    api.token = _token(endpoint)
-    if endpoint != _PRIVATE_ENDPOINT:
-        set_client_factory(
-            lambda: httpx.Client(
-                transport=_Transport(endpoint),
-                trust_env=False,
-                follow_redirects=False,
-            )
-        )
-        _PRIVATE_ENDPOINT = endpoint
+    if endpoint and _origin(endpoint) != "https://huggingface.co":
+        api.endpoint = endpoint.rstrip("/")
+        api.token = _token(endpoint)
     return api
 
 
@@ -157,13 +130,46 @@ def _bytes(path, limit):
     return value
 
 
-@contextmanager
-def _budget():
-    handle = _DEADLINE.set(monotonic() + 60)
-    try:
-        yield
-    finally:
-        _DEADLINE.reset(handle)
+def _download(api, repo_id, revision, trust_remote_code):
+    info = api.repo_info(repo_id, repo_type="kernel", revision=revision)
+    descriptor = getattr(info, "cannery", None)
+    if descriptor is None:
+        return None
+    expected = {"schema", "repo_id", "release_id", "manifest_sha256", "package_sha256"}
+    if (
+        not isinstance(descriptor, dict)
+        or set(descriptor) != expected
+        or descriptor["schema"] != 1
+        or descriptor["repo_id"] != repo_id
+    ):
+        raise ValueError("Unsupported Cannery Hub descriptor")
+    for field in ["manifest_sha256", "package_sha256"]:
+        if not isinstance(descriptor[field], str) or not re.fullmatch("[a-f0-9]{64}", descriptor[field]):
+            raise ValueError("Invalid Cannery artifact pin")
+    raw = json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode()
+    commit = hashlib.sha1(b"cannery-hub-v1\0" + raw, usedforsecurity=False).hexdigest()
+    if not isinstance(descriptor["release_id"], str):
+        raise ValueError("Invalid Cannery release identity")
+    if info.sha != commit or revision not in {commit, "release-" + descriptor["release_id"]}:
+        raise ValueError("Cannery Hub revision mismatch")
+    if not (trust_remote_code is True or isinstance(trust_remote_code, list) and repo_id in trust_remote_code):
+        raise ValueError("Cannery native loading requires explicit trust_remote_code")
+    payloads = {}
+    for filename, field, limit in [
+        ("release.json", "manifest_sha256", 128 * 1024),
+        ("kernel.tar", "package_sha256", 64 * 1024 * 1024),
+    ]:
+        root = Path(os.environ.get("KERNELS_CACHE") or constants.HF_HUB_CACHE)
+        cache = root / "cannery" / hashlib.sha256(_origin(api.endpoint).encode()).hexdigest()
+        path = api.hf_hub_download(repo_id, filename=filename, repo_type="kernel", revision=commit, cache_dir=cache)
+        content = _bytes(path, limit)
+        if hashlib.sha256(content).hexdigest() != descriptor[field]:
+            raise ValueError("Cannery artifact checksum mismatch")
+        payloads[filename] = content
+    manifest = json.loads(payloads["release.json"])
+    if manifest["kernel"] != repo_id or manifest["package"]["sha256"] != descriptor["package_sha256"]:
+        raise ValueError("Cannery manifest identity mismatch")
+    return {"descriptor": descriptor, "package_path": str(path)}
 
 
 def maybe_load(api, repo_id, revision, backend, trust_remote_code):
@@ -180,51 +186,61 @@ def maybe_load(api, repo_id, revision, backend, trust_remote_code):
         if revision.startswith("release-"):
             raise ValueError("Private Cannery get_kernel requires online publication verification")
         return None
-    with _budget():
-        info = api.repo_info(repo_id, repo_type="kernel", revision=revision)
-        descriptor = getattr(info, "cannery", None)
-        if descriptor is None:
-            return None
-        expected = {"schema", "repo_id", "release_id", "manifest_sha256", "package_sha256"}
-        if (
-            not isinstance(descriptor, dict)
-            or set(descriptor) != expected
-            or descriptor["schema"] != 1
-            or descriptor["repo_id"] != repo_id
-        ):
-            raise ValueError("Unsupported Cannery Hub descriptor")
-        for field in ["manifest_sha256", "package_sha256"]:
-            if not isinstance(descriptor[field], str) or not re.fullmatch("[a-f0-9]{64}", descriptor[field]):
-                raise ValueError("Invalid Cannery artifact pin")
-        raw = json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode()
-        commit = hashlib.sha1(b"cannery-hub-v1\0" + raw, usedforsecurity=False).hexdigest()
-        if not isinstance(descriptor["release_id"], str):
-            raise ValueError("Invalid Cannery release identity")
-        if info.sha != commit or revision not in {commit, "release-" + descriptor["release_id"]}:
-            raise ValueError("Cannery Hub revision mismatch")
-        if not (trust_remote_code is True or isinstance(trust_remote_code, list) and repo_id in trust_remote_code):
-            raise ValueError("Cannery native loading requires explicit trust_remote_code")
-        from cannery_kernels import load_cannery_package
+    request = {
+        "endpoint": api.endpoint,
+        "token": api.token,
+        "repo_id": repo_id,
+        "revision": revision,
+        "trust_remote_code": trust_remote_code,
+    }
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", "from kernels._cannery import _worker; _worker()"],
+            input=json.dumps(request),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+            env=os.environ | {"HF_HUB_DISABLE_XET": "1", "HF_HUB_DISABLE_TELEMETRY": "1"},
+        )
+        result = json.loads(completed.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        raise ValueError("Private Hub download failed or exceeded its 60-second deadline") from None
+    if result is None:
+        return None
+    if "error" in result:
+        raise ValueError(result["error"])
+    from cannery_kernels import load_cannery_package
 
-        payloads = {}
-        for filename, field, limit in [
-            ("release.json", "manifest_sha256", 128 * 1024),
-            ("kernel.tar", "package_sha256", 64 * 1024 * 1024),
-        ]:
-            root = Path(os.environ.get("KERNELS_CACHE") or constants.HF_HUB_CACHE)
-            cache = root / "cannery" / hashlib.sha256(_origin(api.endpoint).encode()).hexdigest()
-            path = api.hf_hub_download(
-                repo_id, filename=filename, repo_type="kernel", revision=commit, cache_dir=cache
-            )
-            content = _bytes(path, limit)
-            if hashlib.sha256(content).hexdigest() != descriptor[field]:
-                raise ValueError("Cannery artifact checksum mismatch")
-            payloads[filename] = content
-        manifest = json.loads(payloads["release.json"])
-        if manifest["kernel"] != repo_id or manifest["package"]["sha256"] != descriptor["package_sha256"]:
-            raise ValueError("Cannery manifest identity mismatch")
-        loaded = load_cannery_package(payloads["kernel.tar"], descriptor["package_sha256"], trust_remote_code=True)
-        module = ModuleType("cannery_kernel")
-        module.forward = loaded.forward
-        module._cannery_kernel = loaded
-        return module
+    descriptor = result["descriptor"]
+    package = _bytes(result["package_path"], 64 * 1024 * 1024)
+    loaded = load_cannery_package(package, descriptor["package_sha256"], trust_remote_code=True)
+    module = ModuleType("cannery_kernel")
+    module.forward = loaded.forward
+    module._cannery_kernel = loaded
+    return module
+
+
+def _worker():
+    from huggingface_hub import HfApi
+
+    payload = json.load(sys.stdin)
+    endpoint = payload["endpoint"]
+    set_client_factory(lambda: httpx.Client(transport=_Transport(endpoint), trust_env=False, follow_redirects=False))
+    try:
+        result = _download(
+            HfApi(endpoint=endpoint, token=payload["token"]),
+            payload["repo_id"],
+            payload["revision"],
+            payload["trust_remote_code"],
+        )
+    except Exception as error:
+        known = {"Cannery native loading requires explicit trust_remote_code", "Cannery artifact checksum mismatch"}
+        result = {
+            "error": str(error) if str(error) in known else "Private Hub download or integrity verification failed"
+        }
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    _worker()
