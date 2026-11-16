@@ -72,18 +72,25 @@ class SignatureTests(unittest.TestCase):
         other["scalars"][0]["value"] = -0.0
         self.assertEqual(len(parse_tensor_variants([record, other])), 2)
 
-    def test_package_reader_verifies_but_does_not_execute_tensor_packages(self):
+    def test_package_reader_checks_fingerprint_before_execution(self):
         def tensor(metadata):
             metadata.update(schema_version=3, abi="tensor-v2", variants=[variant()])
 
         data, sha, metadata = package(tensor)
         self.assertEqual(sha, hashlib.sha256(data).hexdigest())
         self.assertEqual(loader.verify_cannery_package(data, sha)[0], metadata)
-        with patch.object(
-            loader.ctypes, "CDLL", side_effect=AssertionError("must not execute")
+        with (
+            patch.object(
+                loader.ctypes, "CDLL", side_effect=AssertionError("must not execute")
+            ),
+            patch.object(
+                loader,
+                "runtime_fingerprint",
+                return_value=metadata["runtime"] | {"cann": "other"},
+            ),
         ):
             with self.assertRaisesRegex(
-                loader.CanneryPackageError, "execution is not enabled"
+                loader.CanneryPackageError, "fingerprint mismatch"
             ):
                 loader.load_cannery_package(data, sha, trust_remote_code=True)
 

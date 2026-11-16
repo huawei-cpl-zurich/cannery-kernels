@@ -5,6 +5,8 @@ Native libraries execute code: callers must explicitly trust the package and
 run untrusted submissions in a device-restricted job container.
 """
 
+from __future__ import annotations
+
 import ctypes
 import hashlib
 import importlib.metadata
@@ -16,7 +18,10 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .tensor_loader import TensorKernel
 
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 
@@ -220,13 +225,11 @@ class CanneryKernel:
 
 def load_cannery_package(
     package: bytes, sha256: str, *, trust_remote_code: bool = False
-) -> CanneryKernel:
+) -> CanneryKernel | TensorKernel:
     """Load verified local bytes; no network, dependency resolution, or compilation."""
     if not trust_remote_code:
         raise CanneryPackageError("Native package loading requires trust_remote_code=True")
     metadata, library = verify_cannery_package(package, sha256)
-    if metadata["abi"] == "tensor-v2":
-        raise CanneryPackageError("Tensor package execution is not enabled in this runtime")
     try:
         current = runtime_fingerprint()
     except (ImportError, importlib.metadata.PackageNotFoundError):
@@ -237,4 +240,8 @@ def load_cannery_package(
         or metadata["runtime"] != current
     ):
         raise CanneryPackageError("Package runtime fingerprint mismatch")
+    if metadata["abi"] == "tensor-v2":
+        from .tensor_loader import TensorKernel
+
+        return TensorKernel(library, metadata)
     return CanneryKernel(library, metadata)
