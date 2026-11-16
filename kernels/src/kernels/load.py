@@ -157,6 +157,14 @@ def get_kernel(
     """
     api = _get_hf_api(user_agent=user_agent)
 
+    from kernels._cannery import maybe_load
+
+    if revision is not None and version is not None:
+        raise ValueError("Cannot specify both revision and version")
+    cannery = maybe_load(api, repo_id, revision, backend, trust_remote_code)
+    if cannery is not None:
+        return cannery
+
     kernel_version = revision_or_version(revision=revision, version=version)
 
     resolvers = [
