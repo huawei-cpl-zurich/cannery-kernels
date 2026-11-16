@@ -75,12 +75,12 @@ CPU compatibility tests do not constitute A3/A5 execution evidence. Record actua
 source/toolchain/runtime revisions, selected physical device and fresh health
 with every hardware validation.
 
-## Tensor bridge contract (not yet admitted)
+## Tensor packages (runtime 0.4+)
 
 `cannery_kernels.tensor_abi` and its packaged `tensor_abi.h` define the native
 `cannery_launch_tensor_v2` bridge for multiple tensors and typed scalar arguments.
-The package verifier can inspect schema 3 / `tensor-v2` packages, but execution
-is not yet enabled. This contract does not relax runtime isolation.
+Schema 3 / `tensor-v2` packages run through the checked native bridge. Loading
+still requires explicit trust, a matching runtime and an isolated worker.
 
 The bridge borrows contiguous tensor storage on the caller's current stream.
 Tensor descriptors carry a device address, up to four dimensions and element
@@ -109,5 +109,12 @@ Scalars declare `name`, `kind` and an exact `value`. Variant dispatch domains ar
 unique by input shapes/dtypes and scalar bit patterns; their ordered named
 interfaces must agree. Schema 3 is A5-only until A3 integration is validated.
 Tensor metadata is bounded at 256 KiB; legacy schemas retain their 16 KiB limit.
-`load_cannery_package` rejects schema 3 before loading any native library in this
-reader-only stage. Existing unary packages remain executable.
+`forward(*inputs, **scalars)` accepts positional tensors in the declared order
+and keyword-only scalar attributes, and returns a dictionary of named outputs.
+It allocates fresh output tensors and returns mutable aliases as the same input
+objects. Contiguous inputs on the bound device are required; no implicit cast or
+materialization occurs. Mutable inputs cannot overlap another input. Every input
+and output records the stream even after a partial enqueue error. Calls do not
+synchronize; callers must synchronize to observe asynchronous failures. After a
+failed call, mutable state may have changed and must be reset before retrying.
+Existing unary packages retain their original `forward(x)` API.
