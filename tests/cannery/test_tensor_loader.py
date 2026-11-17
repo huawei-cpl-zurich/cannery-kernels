@@ -1,13 +1,15 @@
+import ctypes
 import math
+import tempfile
 import unittest
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from test_tensor_signatures import variant
-
 from cannery_kernels import CanneryPackageError
 from cannery_kernels.tensor_loader import TensorKernel
+from test_tensor_signatures import variant
 
 
 class FakeTensor:
@@ -91,9 +93,7 @@ class TensorLoaderTests(unittest.TestCase):
     def test_named_alias_outputs_and_native_descriptor_order(self):
         outputs = self.kernel.forward(self.x, self.cache, offset=1)
         self.assertIs(outputs["cache_out"], self.cache)
-        self.assertEqual(
-            (outputs["indices"].dtype, outputs["indices"].shape), ("int32", (2,))
-        )
+        self.assertEqual((outputs["indices"].dtype, outputs["indices"].shape), ("int32", (2,)))
         stream, ni, inputs, no, native_outputs, ns, scalars = self.native.call_args.args
         self.assertEqual((stream, ni, no, ns), (99, 2, 2, 1))
         self.assertEqual(inputs[0].data, self.x.pointer)
@@ -111,9 +111,7 @@ class TensorLoaderTests(unittest.TestCase):
             lambda: self.kernel.forward(self.x, self.cache, offset=2),
             lambda: self.kernel.forward(self.x, self.cache, offset=1, extra=0),
             lambda: self.kernel.forward(FakeTensor((3, 2)), self.cache, offset=1),
-            lambda: self.kernel.forward(
-                FakeTensor((2, 3), "int32"), self.cache, offset=1
-            ),
+            lambda: self.kernel.forward(FakeTensor((2, 3), "int32"), self.cache, offset=1),
             lambda: self.kernel.forward("x", self.cache, offset=1),
         ]:
             with self.assertRaises(CanneryPackageError):
@@ -163,10 +161,44 @@ class TensorLoaderTests(unittest.TestCase):
         self.assertIn(self.stream, self.x.streams)
 
     def test_missing_bridge_fails_cleanly(self):
-        with patch(
-            "cannery_kernels.tensor_loader.ctypes.CDLL", return_value=SimpleNamespace()
-        ):
-            with self.assertRaisesRegex(
-                CanneryPackageError, "missing its native bridge"
-            ):
+        with patch("cannery_kernels.tensor_loader.ctypes.CDLL", return_value=SimpleNamespace()):
+            with self.assertRaisesRegex(CanneryPackageError, "missing its native bridge"):
                 TensorKernel(b"fake", {"variants": [variant()]})
+
+    def test_optional_native_preparation_runs_once_before_forward(self):
+        prepare = MagicMock(return_value=0)
+        library = SimpleNamespace(
+            cannery_launch_tensor_v2=self.native, cannery_prepare_tensor_v2=prepare
+        )
+        with patch("cannery_kernels.tensor_loader.ctypes.CDLL", return_value=library):
+            kernel = TensorKernel(b"fake", {"variants": [variant()]})
+        self.addCleanup(kernel._directory.cleanup)
+        prepare.assert_called_once_with()
+        self.assertEqual(prepare.argtypes, [])
+        self.assertIs(prepare.restype, ctypes.c_int32)
+        self.native.assert_not_called()
+        kernel.forward(self.x, self.cache, offset=1)
+        kernel.forward(self.x, self.cache, offset=1)
+        prepare.assert_called_once_with()
+
+    def test_native_preparation_failure_releases_temporary_library(self):
+        for failure in [None, RuntimeError("device disconnected")]:
+            directory = tempfile.TemporaryDirectory()
+            self.addCleanup(directory.cleanup)
+            prepare = MagicMock(return_value=507000, side_effect=failure)
+            library = SimpleNamespace(
+                cannery_launch_tensor_v2=self.native, cannery_prepare_tensor_v2=prepare
+            )
+            with (
+                patch("cannery_kernels.tensor_loader.ctypes.CDLL", return_value=library),
+                patch(
+                    "cannery_kernels.tensor_loader.tempfile.TemporaryDirectory",
+                    return_value=directory,
+                ),
+            ):
+                error = RuntimeError if failure else CanneryPackageError
+                message = "disconnected" if failure else "preparation failed: 507000"
+                with self.assertRaisesRegex(error, message):
+                    TensorKernel(b"fake", {"variants": [variant()]})
+            self.assertFalse(Path(directory.name).exists())
+        self.native.assert_not_called()

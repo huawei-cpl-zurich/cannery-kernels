@@ -25,6 +25,13 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif
+/* Optional initialization hook, called once by the loader on its bound device.
+ * Producers may load modules and allocate bounded private resources here.
+ * Return zero on success. On failure, release partial resources and leave no
+ * queued work. Propagate failures; do not defer them to forward.
+ * Libraries without this hook remain compatible. Callers using the hook need
+ * cannery-kernels-runtime >=0.5.0. Keep resources alive with the library. */
+int32_t cannery_prepare_tensor_v2(void);
 /* Return zero on successful enqueue, a nonzero native error otherwise.
  * No ownership transfer, synchronization, allocation, or Python/JIT execution.
  * Callers still synchronize the stream to observe asynchronous failures.
