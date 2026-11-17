@@ -46,6 +46,18 @@ class TensorKernel:
         except (OSError, AttributeError):
             self._directory.cleanup()
             raise CanneryPackageError("Tensor library is missing its native bridge") from None
+        try:
+            prepare = getattr(self._library, "cannery_prepare_tensor_v2", None)
+            if prepare is not None:
+                prepare.argtypes = []
+                prepare.restype = ctypes.c_int32
+                with torch.npu.device(self._device):
+                    status = prepare()
+                if status != 0:
+                    raise CanneryPackageError(f"Tensor native preparation failed: {status}")
+        except Exception:
+            self._directory.cleanup()
+            raise
 
     def forward(self, *inputs: Any, **scalars: Any) -> dict[str, Any]:
         """Return named outputs, including declared mutated input aliases.
