@@ -124,17 +124,24 @@ class TensorKernel:
                     raise CanneryPackageError("Mutable input storage overlaps another input")
         by_name = {spec.name: tensor for spec, tensor in zip(selected.inputs, inputs, strict=True)}
         with torch.npu.device(self._device):
-            outputs = {
-                spec.name: by_name[spec.alias]
-                if spec.alias is not None
-                else torch_npu.empty_with_format(
+
+            def allocate(spec):
+                if spec.alias is not None:
+                    return by_name[spec.alias]
+                output = torch_npu.empty_with_format(
                     spec.shape,
                     dtype=getattr(torch, spec.dtype),
                     device=inputs[0].device,
                     acl_format=2,
                 )
-                for spec in selected.outputs
-            }
+                # Some torch-npu builds return NCHW for rank-four ND requests.
+                if torch_npu.get_npu_format(output) != 2:
+                    output = torch_npu.npu_format_cast(output, 2)
+                if torch_npu.get_npu_format(output) != 2:
+                    raise CanneryPackageError("Output allocation did not produce ND format")
+                return output
+
+            outputs = {spec.name: allocate(spec) for spec in selected.outputs}
             input_descriptors = [
                 tensor_descriptor(t.data_ptr(), spec.shape, spec.dtype)
                 for t, spec in zip(inputs, selected.inputs, strict=True)

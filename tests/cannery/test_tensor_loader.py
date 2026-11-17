@@ -64,7 +64,12 @@ class TensorLoaderTests(unittest.TestCase):
 
         def empty(shape, dtype, device, acl_format):
             self.assertEqual(acl_format, 2)
-            return FakeTensor(shape, dtype, device)
+            result = FakeTensor(shape, dtype, device)
+            result.format = self.allocation_format
+            return result
+
+        self.allocation_format = 2
+        self.cast = MagicMock(side_effect=lambda tensor, _: self.normalize(tensor))
 
         modules = patch.dict(
             "sys.modules",
@@ -73,6 +78,7 @@ class TensorLoaderTests(unittest.TestCase):
                 "torch_npu": SimpleNamespace(
                     get_npu_format=lambda t: t.format,
                     empty_with_format=empty,
+                    npu_format_cast=self.cast,
                 ),
             },
         )
@@ -90,10 +96,45 @@ class TensorLoaderTests(unittest.TestCase):
         self.addCleanup(self.kernel._directory.cleanup)
         self.x, self.cache = FakeTensor((2, 3)), FakeTensor((4, 3))
 
+    @staticmethod
+    def normalize(tensor):
+        tensor.format = 2
+        return tensor
+
+    def test_output_allocation_normalizes_format_before_native_launch(self):
+        self.allocation_format = 0
+
+        def launch(*args):
+            self.assertEqual(self.cast.call_count, 1)
+            self.assertEqual(self.cast.call_args.args[0].format, 2)
+            return 0
+
+        self.native.side_effect = launch
+        outputs = self.kernel.forward(self.x, self.cache, offset=1)
+        self.assertEqual(outputs["indices"].format, 2)
+        self.assertIs(outputs["cache_out"], self.cache)
+        self.assertEqual(self.cast.call_count, 1)
+
+    def test_output_format_conversion_failure_prevents_launch_and_allows_recovery(self):
+        self.allocation_format = 0
+        self.cast.side_effect = RuntimeError("injected device conversion failure")
+        with self.assertRaisesRegex(RuntimeError, "conversion failure"):
+            self.kernel.forward(self.x, self.cache, offset=1)
+        self.native.assert_not_called()
+        self.cast.side_effect = lambda tensor, _: tensor
+        with self.assertRaisesRegex(CanneryPackageError, "did not produce ND"):
+            self.kernel.forward(self.x, self.cache, offset=1)
+        self.native.assert_not_called()
+        self.cast.side_effect = lambda tensor, _: self.normalize(tensor)
+        self.kernel.forward(self.x, self.cache, offset=1)
+        self.native.assert_called_once()
+
     def test_named_alias_outputs_and_native_descriptor_order(self):
         outputs = self.kernel.forward(self.x, self.cache, offset=1)
         self.assertIs(outputs["cache_out"], self.cache)
-        self.assertEqual((outputs["indices"].dtype, outputs["indices"].shape), ("int32", (2,)))
+        self.assertEqual(
+            (outputs["indices"].dtype, outputs["indices"].shape), ("int32", (2,))
+        )
         stream, ni, inputs, no, native_outputs, ns, scalars = self.native.call_args.args
         self.assertEqual((stream, ni, no, ns), (99, 2, 2, 1))
         self.assertEqual(inputs[0].data, self.x.pointer)
@@ -111,7 +152,9 @@ class TensorLoaderTests(unittest.TestCase):
             lambda: self.kernel.forward(self.x, self.cache, offset=2),
             lambda: self.kernel.forward(self.x, self.cache, offset=1, extra=0),
             lambda: self.kernel.forward(FakeTensor((3, 2)), self.cache, offset=1),
-            lambda: self.kernel.forward(FakeTensor((2, 3), "int32"), self.cache, offset=1),
+            lambda: self.kernel.forward(
+                FakeTensor((2, 3), "int32"), self.cache, offset=1
+            ),
             lambda: self.kernel.forward("x", self.cache, offset=1),
         ]:
             with self.assertRaises(CanneryPackageError):
@@ -161,8 +204,12 @@ class TensorLoaderTests(unittest.TestCase):
         self.assertIn(self.stream, self.x.streams)
 
     def test_missing_bridge_fails_cleanly(self):
-        with patch("cannery_kernels.tensor_loader.ctypes.CDLL", return_value=SimpleNamespace()):
-            with self.assertRaisesRegex(CanneryPackageError, "missing its native bridge"):
+        with patch(
+            "cannery_kernels.tensor_loader.ctypes.CDLL", return_value=SimpleNamespace()
+        ):
+            with self.assertRaisesRegex(
+                CanneryPackageError, "missing its native bridge"
+            ):
                 TensorKernel(b"fake", {"variants": [variant()]})
 
     def test_optional_native_preparation_runs_once_before_forward(self):
@@ -190,7 +237,9 @@ class TensorLoaderTests(unittest.TestCase):
                 cannery_launch_tensor_v2=self.native, cannery_prepare_tensor_v2=prepare
             )
             with (
-                patch("cannery_kernels.tensor_loader.ctypes.CDLL", return_value=library),
+                patch(
+                    "cannery_kernels.tensor_loader.ctypes.CDLL", return_value=library
+                ),
                 patch(
                     "cannery_kernels.tensor_loader.tempfile.TemporaryDirectory",
                     return_value=directory,
